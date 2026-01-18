@@ -277,6 +277,17 @@ class Assistant:
                     # MedASR expects 16kHz audio
                     result = self.asr_pipeline(waveform, chunk_length_s=20, stride_length_s=2)
                     text = result['text']
+                    # Clean up CTC output - remove epsilon tokens and duplicates
+                    text = text.replace('<epsilon>', '').replace('</s>', '').replace('<s>', '')
+                    # Remove duplicate consecutive characters/words
+                    words = text.split()
+                    cleaned_words = []
+                    prev_word = None
+                    for word in words:
+                        if word != prev_word:
+                            cleaned_words.append(word)
+                            prev_word = word
+                    text = ' '.join(cleaned_words)
                 else:
                     transcript = self.model.transcribe(waveform,
                                                     language=self.config.whisperRecognition.lang,
