@@ -361,39 +361,23 @@ class Assistant:
             self.add_dialogue("AI", text)
             self.display_message("Speaking...")
 
-        self.stop_speech = False  # Reset stop flag
-
-        def play_speech():
-            try:
-                logging.info("Initializing TTS engine")
-                self.tts_engine = pyttsx3.init()
-
-                # Adjust the speech rate (optional)
-                rate = self.tts_engine.getProperty('rate')
-                self.tts_engine.setProperty('rate', rate - 50)
-
-                time.sleep(0.3)
-
-                if not self.stop_speech:
-                    logging.info("Converting text to speech")
-                    self.tts_engine.say(text)
-                    self.tts_engine.runAndWait()
-                    logging.info("Speech playback completed")
-            except Exception as e:
-                logging.error(f"An error occurred during speech playback: {str(e)}")
-
-        speech_thread = threading.Thread(target=play_speech)
-        speech_thread.start()
+        # Use the existing TTS engine (initialized in __init__)
+        # Run synchronously - macOS nsss driver has issues with threading
+        try:
+            logging.info("Starting speech playback")
+            self.tts.say(text)
+            self.tts.runAndWait()
+            logging.info("Speech playback completed")
+        except Exception as e:
+            logging.error(f"An error occurred during speech playback: {str(e)}")
 
     def interrupt_speech(self):
         """Stop current speech"""
         logging.info("Interrupting speech")
-        self.stop_speech = True
-        if hasattr(self, 'tts_engine'):
-            try:
-                self.tts_engine.stop()
-            except:
-                pass
+        try:
+            self.tts.stop()
+        except:
+            pass
 
 
 def main():
