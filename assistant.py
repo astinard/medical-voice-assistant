@@ -277,13 +277,24 @@ class Assistant:
                     # MedASR expects 16kHz audio
                     result = self.asr_pipeline(waveform, chunk_length_s=20, stride_length_s=2)
                     text = result['text']
-                    # Clean up CTC output - remove epsilon tokens and duplicates
+                    # Clean up CTC output - remove epsilon tokens
                     text = text.replace('<epsilon>', '').replace('</s>', '').replace('<s>', '')
-                    # Remove duplicate consecutive characters/words
+                    # Remove excessive dashes/hyphens
+                    text = re.sub(r'-{2,}', '-', text)
+                    # Remove duplicate consecutive characters within words (e.g., "Alrightight" -> "Alright")
+                    def clean_word(word):
+                        # Remove repeated syllables at end (e.g., "yearar" -> "year", "oldold" -> "old")
+                        for length in range(2, min(5, len(word)//2 + 1)):
+                            if len(word) >= length * 2:
+                                end = word[-length:]
+                                if word[-(length*2):-length] == end:
+                                    word = word[:-length]
+                        return word
                     words = text.split()
                     cleaned_words = []
                     prev_word = None
                     for word in words:
+                        word = clean_word(word)
                         if word != prev_word:
                             cleaned_words.append(word)
                             prev_word = word
@@ -316,7 +327,7 @@ class Assistant:
             "stream": True,
             "context": self.context,
             "prompt": full_prompt,
-            "system": "You are a helpful medical assistant. Give accurate, concise answers. Include specific doses, drug names, and key clinical facts. Keep responses under 100 words when possible."
+            "system": "You are a helpful medical assistant. For differential diagnoses, list 5-7 possibilities ranked by likelihood with brief reasoning. For other questions, give accurate concise answers with specific doses, drug names, and key clinical facts."
         }
         
         try:
