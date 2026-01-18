@@ -114,8 +114,8 @@ def clean_text_for_speech(text):
     text = text.strip()
 
     # Limit length for TTS (long text = long generation time)
-    if len(text) > 500:
-        text = text[:500] + "..."
+    if len(text) > 400:
+        text = text[:400] + "..."
 
     return text
 
