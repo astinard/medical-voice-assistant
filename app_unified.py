@@ -44,15 +44,14 @@ def load_whisper():
     return whisper_model
 
 def load_chatterbox():
-    """Load Chatterbox model (lazy loading)"""
+    """Load Chatterbox Turbo model on CPU - fast and stable"""
     global chatterbox_model
     if chatterbox_model is None:
-        print("Loading Chatterbox model...")
-        from chatterbox.tts import ChatterboxTTS
-        device = get_device()
-        print(f"Using device: {device}")
-        chatterbox_model = ChatterboxTTS.from_pretrained(device=device)
-        print("Chatterbox loaded!")
+        print("Loading Chatterbox Turbo on CPU...")
+        from chatterbox.tts_turbo import ChatterboxTurboTTS
+        # Turbo on CPU: fast (1 step vs 1000) and stable
+        chatterbox_model = ChatterboxTurboTTS.from_pretrained(device="cpu")
+        print("Chatterbox Turbo loaded!")
     return chatterbox_model
 
 def transcribe_audio(audio_path):
@@ -92,6 +91,34 @@ def ask_ollama(prompt, history):
     except requests.exceptions.RequestException as e:
         return f"Error connecting to Ollama: {str(e)}"
 
+def clean_text_for_speech(text):
+    """Clean text for TTS - remove markdown, special chars, etc."""
+    import re
+
+    # Remove markdown formatting
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # **bold**
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)      # *italic*
+    text = re.sub(r'#{1,6}\s*', '', text)           # # headers
+    text = re.sub(r'`([^`]+)`', r'\1', text)        # `code`
+
+    # Remove bullet points and numbered lists
+    text = re.sub(r'^\s*[-•]\s*', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s*', '', text, flags=re.MULTILINE)
+
+    # Remove special characters that cause issues
+    text = re.sub(r'[<>{}[\]|\\^~]', '', text)
+
+    # Clean up whitespace
+    text = re.sub(r'\n+', '. ', text)
+    text = re.sub(r'\s+', ' ', text)
+    text = text.strip()
+
+    # Limit length for TTS (long text = long generation time)
+    if len(text) > 500:
+        text = text[:500] + "..."
+
+    return text
+
 def text_to_speech(text, use_cloned_voice=False):
     """Convert text to speech, optionally using cloned voice"""
     global cloned_voice_path
@@ -101,9 +128,12 @@ def text_to_speech(text, use_cloned_voice=False):
             # Use Chatterbox for voice cloning
             try:
                 tts = load_chatterbox()
-                print(f"Generating cloned speech for: {text[:50]}...")
 
-                wav = tts.generate(text, audio_prompt_path=cloned_voice_path)
+                # Clean text for speech
+                clean_text = clean_text_for_speech(text)
+                print(f"Generating cloned speech for: {clean_text[:80]}...")
+
+                wav = tts.generate(clean_text, audio_prompt_path=cloned_voice_path)
 
                 output_path = tempfile.mktemp(suffix=".wav")
                 torchaudio.save(output_path, wav, tts.sr)
@@ -240,26 +270,23 @@ with gr.Blocks(title="Medical Voice Assistant") as demo:
                     status_text = gr.Textbox(label="Status", interactive=False, value="Ready")
 
         with gr.Tab("🎭 Voice Clone"):
-            gr.HTML("""
-                <div style="text-align: center; padding: 20px;">
-                    <h2>Clone Your Voice</h2>
-                    <p style="color: #666;">Record 10-30 seconds of speech. The AI will respond using your voice!</p>
-                    <p style="color: #00d4aa; font-weight: bold;">✨ Works 100% offline after first load</p>
-                </div>
+            gr.Markdown("""
+            ## Clone Your Voice
+            Record 10-30 seconds of speech. The AI will respond using your voice!
+
+            **✨ Works 100% offline after first load**
             """)
 
             with gr.Row():
                 with gr.Column():
-                    gr.HTML("""
-                        <div style="background: #f5f5f5; padding: 20px; border-radius: 12px; margin-bottom: 16px;">
-                            <h4 style="color: #00a3cc;">📖 Sample Text to Read:</h4>
-                            <p style="line-height: 1.8;">
-                                "The patient presented with acute onset chest pain, radiating to the left arm.
-                                Vital signs showed elevated blood pressure at 160 over 95.
-                                Initial ECG revealed ST-segment elevation in leads V1 through V4.
-                                Troponin levels were ordered and pending."
-                            </p>
-                        </div>
+                    gr.Markdown("""
+                    ### 📖 Sample Text to Read:
+
+                    > "The patient presented with acute onset chest pain, radiating to the left arm.
+                    > Vital signs showed elevated blood pressure at 160 over 95 millimeters of mercury.
+                    > Initial ECG revealed ST-segment elevation in leads V1 through V4.
+                    > Troponin levels were ordered and pending. The differential diagnosis includes
+                    > acute coronary syndrome, pulmonary embolism, and aortic dissection."
                     """)
 
                     voice_sample = gr.Audio(sources=["microphone"], type="numpy", label="Record your voice (10-30 sec)")
