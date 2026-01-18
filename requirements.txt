@@ -13,5 +13,13 @@ numpy>=2.0.0
 # pip install git+https://github.com/huggingface/transformers.git
 huggingface-hub>=1.0.0
 
-# Optional: Standard Whisper (set USE_MEDICAL_WHISPER=False in assistant.py)
-# openai-whisper @ git+https://github.com/openai/whisper.git
+# Standard Whisper
+openai-whisper
+
+# Modern Gradio UI
+gradio>=6.0.0
+
+# Voice cloning (optional - requires Python 3.11)
+# For Chatterbox: pip install chatterbox-tts (Python 3.11 only)
+# For OpenVoice: pip install openvoice-cli
+openvoice-cli

@@ -370,25 +370,43 @@ class Assistant:
         # Add AI response to dialogue history
         if text.strip():
             self.add_dialogue("AI", text)
-            self.display_message("Speaking...")
+            self.display_message("Speaking... (press Space to interrupt)")
 
-        # Use the existing TTS engine (initialized in __init__)
-        # Run synchronously - macOS nsss driver has issues with threading
-        try:
-            logging.info("Starting speech playback")
-            self.tts.say(text)
-            self.tts.runAndWait()
-            logging.info("Speech playback completed")
-        except Exception as e:
-            logging.error(f"An error occurred during speech playback: {str(e)}")
+        self.is_speaking = True
+        self.say_process = None
+
+        def speak():
+            try:
+                logging.info("Starting speech playback using macOS say")
+                import subprocess
+                # Use macOS say command - can be killed for interrupt
+                self.say_process = subprocess.Popen(['say', '-r', '180', text])
+                self.say_process.wait()
+                logging.info("Speech playback completed")
+            except Exception as e:
+                logging.error(f"An error occurred during speech playback: {str(e)}")
+            finally:
+                self.is_speaking = False
+                self.say_process = None
+
+        # Run in thread so main loop can check for interrupts
+        self.speech_thread = threading.Thread(target=speak)
+        self.speech_thread.start()
 
     def interrupt_speech(self):
         """Stop current speech"""
         logging.info("Interrupting speech")
-        try:
-            self.tts.stop()
-        except:
-            pass
+        self.is_speaking = False
+        if hasattr(self, 'say_process') and self.say_process:
+            try:
+                self.say_process.terminate()
+            except:
+                pass
+
+    def wait_for_speech(self):
+        """Wait for speech to complete, checking for interrupt"""
+        if hasattr(self, 'speech_thread'):
+            self.speech_thread.join()
 
 
 def main():
@@ -396,6 +414,7 @@ def main():
     pygame.init()
 
     ass = Assistant()
+    ass.is_speaking = False
 
     push_to_talk_key = pygame.K_SPACE
     quit_key = pygame.K_ESCAPE
@@ -405,6 +424,12 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.KEYDOWN:
                 if event.key == push_to_talk_key:
+                    # If speaking, interrupt first
+                    if ass.is_speaking:
+                        logging.info("Interrupting speech for new input")
+                        ass.interrupt_speech()
+                        time.sleep(0.3)  # Brief pause for TTS to stop
+
                     logging.info("Push-to-talk key pressed")
                     speech = ass.waveform_from_mic(push_to_talk_key)
 
@@ -417,12 +442,23 @@ def main():
 
                     ass.ask_ollama(transcription, ass.text_to_speech)
 
-                    time.sleep(1)
-                    ass.display_message(ass.config.messages.pressSpace)
+                    # Wait for speech in background, checking for new input
+                    while ass.is_speaking:
+                        ass.clock.tick(60)
+                        pygame.event.pump()
+                        pressed = pygame.key.get_pressed()
+                        if pressed[push_to_talk_key]:
+                            break  # Will handle interrupt on next loop
+
+                    if not ass.is_speaking:
+                        ass.display_message(ass.config.messages.pressSpace)
 
                 elif event.key == quit_key:
                     logging.info("Quit key pressed")
                     ass.shutdown()
+
+            elif event.type == pygame.locals.QUIT:
+                ass.shutdown()
 
 
 if __name__ == "__main__":
