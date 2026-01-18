@@ -20,7 +20,7 @@ import re
 from transformers import WhisperProcessor, WhisperForConditionalGeneration
 
 # Flag to use medical whisper vs standard whisper
-USE_MEDICAL_WHISPER = True
+USE_MEDICAL_WHISPER = False
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
