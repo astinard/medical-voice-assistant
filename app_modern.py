@@ -61,45 +61,38 @@ def ask_ollama(prompt, history):
     except requests.exceptions.RequestException as e:
         return f"Error connecting to Ollama: {str(e)}"
 
+CHATTERBOX_URL = "http://127.0.0.1:5001"
+
 def text_to_speech(text, use_cloned_voice=False):
-    """Convert text to speech, optionally using cloned voice"""
+    """Convert text to speech, optionally using cloned voice via Chatterbox"""
     global cloned_voice_path
 
     try:
         if use_cloned_voice and cloned_voice_path:
-            # Try OpenVoice for voice cloning
+            # Use Chatterbox service for voice cloning
             try:
-                from openvoice.api import ToneColorConverter
-                from openvoice import se_extractor
-
-                # Check if checkpoints exist
-                ckpt_path = os.path.join(os.path.dirname(__file__), 'checkpoints_v2', 'converter')
-                if os.path.exists(ckpt_path):
-                    device = "mps" if torch.backends.mps.is_available() else "cpu"
-                    converter = ToneColorConverter(f'{ckpt_path}/config.json', device=device)
-                    converter.load_ckpt(f'{ckpt_path}/checkpoint.pth')
-
-                    # Extract target voice embedding
-                    target_se, _ = se_extractor.get_se(cloned_voice_path, converter, vad=True)
-
-                    # Generate base speech with macOS say
-                    base_path = tempfile.mktemp(suffix=".aiff")
-                    subprocess.run(['say', '-o', base_path, '-r', '180', text], check=True)
-
-                    # Convert to cloned voice
-                    output_path = tempfile.mktemp(suffix=".wav")
-                    converter.convert(
-                        audio_src_path=base_path,
-                        src_se=None,
-                        tgt_se=target_se,
-                        output_path=output_path,
+                with open(cloned_voice_path, 'rb') as f:
+                    files = {'voice_sample': ('voice.wav', f, 'audio/wav')}
+                    data = {'text': text}
+                    response = requests.post(
+                        f"{CHATTERBOX_URL}/clone",
+                        files=files,
+                        data=data,
+                        timeout=120
                     )
-                    os.remove(base_path)
-                    return output_path
 
-            except (ImportError, FileNotFoundError, Exception) as e:
-                print(f"Voice cloning not available: {e}")
-                # Fallback to default TTS
+                if response.status_code == 200:
+                    output_path = tempfile.mktemp(suffix=".wav")
+                    with open(output_path, 'wb') as f:
+                        f.write(response.content)
+                    return output_path
+                else:
+                    print(f"Chatterbox error: {response.text}")
+
+            except requests.exceptions.ConnectionError:
+                print("Chatterbox service not running, using default TTS")
+            except Exception as e:
+                print(f"Voice cloning error: {e}")
 
         # Default: Use macOS say command
         output_path = tempfile.mktemp(suffix=".aiff")
