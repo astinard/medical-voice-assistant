@@ -11,10 +11,16 @@ import pygame
 import pygame.locals
 import numpy as np
 import pyaudio
-import whisper
 import logging
 import threading
 import queue
+import re
+
+# Medical Whisper from HuggingFace
+from transformers import WhisperProcessor, WhisperForConditionalGeneration
+
+# Flag to use medical whisper vs standard whisper
+USE_MEDICAL_WHISPER = True
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -71,7 +77,14 @@ class Assistant:
             self.wait_exit()
 
         self.display_message(self.config.messages.loadingModel)
-        self.model = whisper.load_model(self.config.whisperRecognition.modelPath)
+        if USE_MEDICAL_WHISPER:
+            logging.info("Loading Google MedASR model...")
+            from transformers import pipeline
+            self.asr_pipeline = pipeline('automatic-speech-recognition', model='google/medasr')
+            logging.info("MedASR loaded successfully")
+        else:
+            import whisper
+            self.model = whisper.load_model(self.config.whisperRecognition.modelPath)
         self.context = []
 
         self.text_to_speech(self.config.conversation.greeting)
@@ -260,11 +273,16 @@ class Assistant:
         def transcribe_speech():
             try:
                 logging.info("Starting transcription")
-                transcript = self.model.transcribe(waveform,
-                                                language=self.config.whisperRecognition.lang,
-                                                fp16=torch.cuda.is_available())
+                if USE_MEDICAL_WHISPER:
+                    # MedASR expects 16kHz audio
+                    result = self.asr_pipeline(waveform, chunk_length_s=20, stride_length_s=2)
+                    text = result['text']
+                else:
+                    transcript = self.model.transcribe(waveform,
+                                                    language=self.config.whisperRecognition.lang,
+                                                    fp16=torch.cuda.is_available())
+                    text = transcript["text"]
                 logging.info("Transcription completed")
-                text = transcript["text"]
                 print('\nMe:\n', text.strip())
                 result_queue.put(text)
             except Exception as e:

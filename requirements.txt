@@ -1,13 +1,17 @@
-torch==2.7.1
-torchvision==0.22.1
-torchaudio==2.7.1
-pyttsx3==2.98
-blobfile==3.0.0
-openai==1.84.0
-Wave==0.0.2
-PyAudio==0.2.14
-PyYAML==6.0.2
-pygame==2.6.1
-soundfile==0.13.1
-pyObjC==11.0
-openai-whisper @ git+https://github.com/openai/whisper.git@dd985ac4b90cafeef8712f2998d62c59c3e62d22
+torch>=2.7.0
+torchaudio>=2.7.0
+pyttsx3>=2.90
+PyAudio>=0.2.14
+PyYAML>=6.0
+pygame>=2.6.0
+soundfile>=0.13.0
+pyObjC>=11.0
+numpy>=2.0.0
+
+# For Google MedASR (medical speech recognition)
+# Install transformers from git for latest model support:
+# pip install git+https://github.com/huggingface/transformers.git
+huggingface-hub>=1.0.0
+
+# Optional: Standard Whisper (set USE_MEDICAL_WHISPER=False in assistant.py)
+# openai-whisper @ git+https://github.com/openai/whisper.git
