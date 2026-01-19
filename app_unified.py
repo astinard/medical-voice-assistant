@@ -63,13 +63,15 @@ def transcribe_audio(audio_path):
     except Exception as e:
         return f"Transcription error: {str(e)}"
 
-def ask_ollama(prompt, history):
+def ask_ollama(prompt, history, model=None):
     """Send prompt to Ollama and get response"""
-    global conversation_context
+    global conversation_context, OLLAMA_MODEL
+
+    use_model = model if model else OLLAMA_MODEL
 
     try:
         json_param = {
-            "model": OLLAMA_MODEL,
+            "model": use_model,
             "stream": False,
             "context": conversation_context,
             "prompt": prompt,
@@ -145,19 +147,25 @@ def text_to_speech(text, use_cloned_voice=False):
                 # Fallback to default
 
         # Default: Use macOS say command
+        clean_text = clean_text_for_speech(text)
+        print(f"Generating speech for: {clean_text[:80]}...")
         output_path = tempfile.mktemp(suffix=".aiff")
-        subprocess.run(['say', '-o', output_path, '-r', '180', text], check=True)
+        subprocess.run(['say', '-o', output_path, '-r', '180', clean_text], check=True)
+        print("Speech generated!")
         return output_path
 
     except Exception as e:
         print(f"TTS Error: {e}")
         return None
 
-def process_voice_input(audio, history):
+def process_voice_input(audio, history, voice_mode, model_choice):
     """Process voice input and return response"""
+    import time
+
     if audio is None:
         return "", None, history, "Please record your question first."
 
+    total_start = time.time()
     sr, audio_data = audio
 
     # Save to temp file for Whisper
@@ -165,31 +173,57 @@ def process_voice_input(audio, history):
     import soundfile as sf
     sf.write(temp_path, audio_data, sr)
 
+    # STT timing
+    stt_start = time.time()
     transcription = transcribe_audio(temp_path)
+    stt_time = time.time() - stt_start
     os.remove(temp_path)
 
     if not transcription:
         return "", None, history, "Could not transcribe audio."
 
-    # Get AI response
-    response = ask_ollama(transcription, history)
+    # LLM timing
+    llm_start = time.time()
+    response = ask_ollama(transcription, history, model=model_choice)
+    llm_time = time.time() - llm_start
 
-    # Generate speech
-    audio_response = text_to_speech(response, use_cloned_voice=cloned_voice_path is not None)
+    # TTS timing
+    tts_start = time.time()
+    use_cloned = (voice_mode == "🎭 My Voice (slower)") and (cloned_voice_path is not None)
+    audio_response = text_to_speech(response, use_cloned_voice=use_cloned)
+    tts_time = time.time() - tts_start
+
+    total_time = time.time() - total_start
+    status = f"✅ Total: {total_time:.1f}s (STT: {stt_time:.1f}s | LLM: {llm_time:.1f}s | TTS: {tts_time:.1f}s)"
 
     history = history + [[transcription, response]]
-    return transcription, audio_response, history, "Ready"
+    return transcription, audio_response, history, status
 
-def process_text_input(message, history):
+def process_text_input(message, history, voice_mode, model_choice):
     """Process text input and return response with audio"""
-    if not message:
-        return "", history, None
+    import time
 
-    response = ask_ollama(message, history)
-    audio_response = text_to_speech(response, use_cloned_voice=cloned_voice_path is not None)
+    if not message:
+        return "", history, None, "Ready"
+
+    total_start = time.time()
+
+    # LLM timing
+    llm_start = time.time()
+    response = ask_ollama(message, history, model=model_choice)
+    llm_time = time.time() - llm_start
+
+    # TTS timing
+    tts_start = time.time()
+    use_cloned = (voice_mode == "🎭 My Voice (slower)") and (cloned_voice_path is not None)
+    audio_response = text_to_speech(response, use_cloned_voice=use_cloned)
+    tts_time = time.time() - tts_start
+
+    total_time = time.time() - total_start
+    status = f"✅ Total: {total_time:.1f}s (LLM: {llm_time:.1f}s | TTS: {tts_time:.1f}s)"
 
     history = history + [[message, response]]
-    return "", history, audio_response
+    return "", history, audio_response, status
 
 def clone_voice(audio):
     """Save voice sample for cloning"""
@@ -241,13 +275,25 @@ with gr.Blocks(title="Medical Voice Assistant") as demo:
     """)
 
     with gr.Row():
-        voice_status = gr.Textbox(value="🔊 Default Voice", label="Voice Mode", interactive=False, scale=1)
+        voice_status = gr.Textbox(value="🔊 Default Voice", label="Clone Status", interactive=False, scale=1)
+        voice_mode = gr.Radio(
+            choices=["⚡ Fast (system voice)", "🎭 My Voice (slower)"],
+            value="⚡ Fast (system voice)",
+            label="Response Voice",
+            scale=2
+        )
+        model_choice = gr.Radio(
+            choices=["williamljx/medgemma-4b-it-Q4_K_M-GGUF", "alibayram/medgemma:27b"],
+            value="williamljx/medgemma-4b-it-Q4_K_M-GGUF",
+            label="Medical Model (4B=fast, 27B=smarter)",
+            scale=2
+        )
 
     with gr.Tabs():
         with gr.Tab("💬 Chat"):
             with gr.Row():
                 with gr.Column(scale=3):
-                    chatbot = gr.Chatbot(label="Conversation", height=450, show_label=False)
+                    chatbot = gr.Chatbot(label="Conversation", height=450, show_label=False, type="tuples")
 
                     with gr.Row():
                         msg_input = gr.Textbox(
@@ -299,14 +345,15 @@ with gr.Blocks(title="Medical Voice Assistant") as demo:
 
         with gr.Tab("⚙️ Settings"):
             gr.HTML("<h2>Model Settings</h2>")
+            gr.Markdown("*Use the toggle at the top to switch models. Settings below are for reference.*")
             model_dropdown = gr.Dropdown(
                 choices=[
                     "williamljx/medgemma-4b-it-Q4_K_M-GGUF",
-                    "williamljx/medgemma-27b-it-Q4_K_M-GGUF",
-                    "llama3.2:3b",
+                    "alibayram/medgemma:27b",
                 ],
                 value=OLLAMA_MODEL,
-                label="Ollama Model",
+                label="Available Models",
+                interactive=False,
             )
 
             gr.HTML(f"""
@@ -322,12 +369,12 @@ with gr.Blocks(title="Medical Voice Assistant") as demo:
             """)
 
     # Event handlers
-    msg_input.submit(process_text_input, [msg_input, chatbot], [msg_input, chatbot, audio_output])
-    send_btn.click(process_text_input, [msg_input, chatbot], [msg_input, chatbot, audio_output])
+    msg_input.submit(process_text_input, [msg_input, chatbot, voice_mode, model_choice], [msg_input, chatbot, audio_output, status_text])
+    send_btn.click(process_text_input, [msg_input, chatbot, voice_mode, model_choice], [msg_input, chatbot, audio_output, status_text])
 
     voice_btn.click(
         process_voice_input,
-        [voice_input, chatbot],
+        [voice_input, chatbot, voice_mode, model_choice],
         [transcription_output, audio_output, chatbot, status_text],
     ).then(lambda: None, None, voice_input)
 
