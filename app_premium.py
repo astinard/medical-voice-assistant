@@ -656,7 +656,10 @@ def process_voice_input(audio, history, voice_mode, model_choice):
     total_time = time.time() - total_start
     status = f"✓ {total_time:.1f}s total  ·  STT {stt_time:.1f}s  ·  LLM {llm_time:.1f}s  ·  TTS {tts_time:.1f}s"
 
-    history = history + [[transcription, response]]
+    history = history + [
+        {"role": "user", "content": transcription},
+        {"role": "assistant", "content": response}
+    ]
     return transcription, audio_response, history, status
 
 def process_text_input(message, history, voice_mode, model_choice):
@@ -680,7 +683,10 @@ def process_text_input(message, history, voice_mode, model_choice):
     total_time = time.time() - total_start
     status = f"✓ {total_time:.1f}s total  ·  LLM {llm_time:.1f}s  ·  TTS {tts_time:.1f}s"
 
-    history = history + [[message, response]]
+    history = history + [
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": response}
+    ]
     return "", history, audio_response, status
 
 def clone_voice(audio):
@@ -710,28 +716,32 @@ def clear_cloned_voice():
     return "Voice cleared. Using system voice.", gr.update(value="No Voice")
 
 def reset_conversation():
-    """Reset the conversation context"""
+    """Reset the conversation context and show greeting again"""
     global conversation_context
     conversation_context = []
-    return [], "Conversation cleared"
+    return [{"role": "assistant", "content": GREETING_TEXT}], "Conversation cleared"
 
 # Quick Chat - separate context for fast text-only chat
 quick_chat_context = []
 
 def process_quick_chat(message, history, model_choice):
-    """Process text-only chat - fastest mode, no audio"""
+    """Process text-only chat with streaming - fastest mode, no audio"""
     global quick_chat_context
     import time
 
     if not message:
-        return "", history, "Ready"
+        yield "", history, "Ready"
+        return
 
     start = time.time()
+
+    # Add user message to history immediately
+    history = history + [{"role": "user", "content": message}]
 
     try:
         json_param = {
             "model": model_choice,
-            "stream": False,
+            "stream": True,  # Enable streaming
             "context": quick_chat_context,
             "prompt": message,
             "system": SYSTEM_PROMPT
@@ -741,27 +751,56 @@ def process_quick_chat(message, history, model_choice):
             OLLAMA_URL,
             json=json_param,
             headers={'Content-Type': 'application/json'},
-            timeout=120
+            timeout=120,
+            stream=True  # Enable HTTP streaming
         )
         response.raise_for_status()
 
-        result = response.json()
-        quick_chat_context = result.get('context', [])
-        response_text = result.get('response', 'No response received')
+        # Stream the response token by token
+        full_response = ""
+        for line in response.iter_lines():
+            if line:
+                chunk = json.loads(line)
+                token = chunk.get('response', '')
+                full_response += token
+
+                # Update history with partial response
+                current_history = history + [{"role": "assistant", "content": full_response}]
+                elapsed = time.time() - start
+                yield "", current_history, f"⏳ {elapsed:.1f}s..."
+
+                # Save context when done
+                if chunk.get('done', False):
+                    quick_chat_context = chunk.get('context', [])
+
+        # Final update with complete response
+        elapsed = time.time() - start
+        final_history = history + [{"role": "assistant", "content": full_response}]
+        yield "", final_history, f"✓ {elapsed:.2f}s"
 
     except requests.exceptions.RequestException as e:
-        response_text = f"Error connecting to Ollama: {str(e)}"
-
-    elapsed = time.time() - start
-    status = f"✓ {elapsed:.2f}s"
-    history = history + [[message, response_text]]
-    return "", history, status
+        error_msg = f"Error: {str(e)}"
+        history = history + [{"role": "assistant", "content": error_msg}]
+        yield "", history, "Error"
 
 def reset_quick_chat():
     """Reset quick chat context"""
     global quick_chat_context
     quick_chat_context = []
     return [], "Chat cleared"
+
+# Greeting for voice mode
+GREETING_TEXT = "Hello! I'm your medical assistant. How can I help you today?"
+
+def generate_greeting_audio():
+    """Generate the initial greeting audio"""
+    try:
+        output_path = tempfile.mktemp(suffix=".aiff")
+        subprocess.run(['say', '-o', output_path, '-r', '180', GREETING_TEXT], check=True)
+        return output_path
+    except Exception as e:
+        print(f"Greeting audio error: {e}")
+        return None
 
 # Build the interface
 with gr.Blocks(title="Medica - AI Medical Assistant") as demo:
@@ -809,6 +848,7 @@ with gr.Blocks(title="Medica - AI Medical Assistant") as demo:
                         label="Conversation",
                         height=480,
                         show_label=False,
+                        value=[{"role": "assistant", "content": GREETING_TEXT}],
                     )
 
                     with gr.Row():
@@ -1010,18 +1050,21 @@ with gr.Blocks(title="Medica - AI Medical Assistant") as demo:
     clone_btn.click(clone_voice, [voice_sample], [clone_status, voice_status])
     clear_voice_btn.click(clear_cloned_voice, None, [clone_status, voice_status])
 
-    # Quick Chat event handlers
+    # Quick Chat event handlers (with streaming)
     quick_msg_input.submit(
         process_quick_chat,
         [quick_msg_input, quick_chatbot, model_choice],
-        [quick_msg_input, quick_chatbot, quick_status]
+        [quick_msg_input, quick_chatbot, quick_status],
     )
     quick_send_btn.click(
         process_quick_chat,
         [quick_msg_input, quick_chatbot, model_choice],
-        [quick_msg_input, quick_chatbot, quick_status]
+        [quick_msg_input, quick_chatbot, quick_status],
     )
     quick_clear_btn.click(reset_quick_chat, None, [quick_chatbot, quick_status])
+
+    # Auto-play greeting on app load
+    demo.load(generate_greeting_audio, None, audio_output)
 
 if __name__ == "__main__":
     print(f"Device: {get_device()}")
