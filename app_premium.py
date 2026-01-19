@@ -744,7 +744,12 @@ def process_quick_chat(message, history, model_choice):
             "stream": True,  # Enable streaming
             "context": quick_chat_context,
             "prompt": message,
-            "system": SYSTEM_PROMPT
+            "system": SYSTEM_PROMPT,
+            "options": {
+                "num_ctx": 4096,       # Smaller context = faster
+                "num_predict": 1000,   # Limit response length
+                "temperature": 0.7,
+            }
         }
 
         response = requests.post(
