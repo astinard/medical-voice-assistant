@@ -715,16 +715,56 @@ def reset_conversation():
     conversation_context = []
     return [], "Conversation cleared"
 
+# Quick Chat - separate context for fast text-only chat
+quick_chat_context = []
+
+def process_quick_chat(message, history, model_choice):
+    """Process text-only chat - fastest mode, no audio"""
+    global quick_chat_context
+    import time
+
+    if not message:
+        return "", history, "Ready"
+
+    start = time.time()
+
+    try:
+        json_param = {
+            "model": model_choice,
+            "stream": False,
+            "context": quick_chat_context,
+            "prompt": message,
+            "system": SYSTEM_PROMPT
+        }
+
+        response = requests.post(
+            OLLAMA_URL,
+            json=json_param,
+            headers={'Content-Type': 'application/json'},
+            timeout=120
+        )
+        response.raise_for_status()
+
+        result = response.json()
+        quick_chat_context = result.get('context', [])
+        response_text = result.get('response', 'No response received')
+
+    except requests.exceptions.RequestException as e:
+        response_text = f"Error connecting to Ollama: {str(e)}"
+
+    elapsed = time.time() - start
+    status = f"✓ {elapsed:.2f}s"
+    history = history + [[message, response_text]]
+    return "", history, status
+
+def reset_quick_chat():
+    """Reset quick chat context"""
+    global quick_chat_context
+    quick_chat_context = []
+    return [], "Chat cleared"
+
 # Build the interface
-with gr.Blocks(
-    title="Medica - AI Medical Assistant",
-    css=PREMIUM_CSS,
-    theme=gr.themes.Base(
-        primary_hue="orange",
-        secondary_hue="slate",
-        neutral_hue="slate",
-    )
-) as demo:
+with gr.Blocks(title="Medica - AI Medical Assistant") as demo:
 
     # Premium Header
     gr.HTML("""
@@ -769,8 +809,6 @@ with gr.Blocks(
                         label="Conversation",
                         height=480,
                         show_label=False,
-                        type="tuples",
-                        bubble_full_width=False,
                     )
 
                     with gr.Row():
@@ -818,6 +856,64 @@ with gr.Blocks(
                     reset_btn = gr.Button("Clear Conversation", variant="secondary")
                     status_text = gr.Textbox(
                         label="Performance",
+                        interactive=False,
+                        value="Ready",
+                        show_label=True,
+                    )
+
+        with gr.Tab("Quick Chat", id="quick"):
+            gr.HTML("""
+                <div style="padding: 16px 0;">
+                    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                        <div style="width: 36px; height: 36px; background: linear-gradient(135deg, #5eead4 0%, #2dd4bf 100%);
+                                    border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px;">
+                            ⚡
+                        </div>
+                        <h2 style="font-family: 'Playfair Display', serif; font-size: 24px; color: #f7f8f8; margin: 0;">
+                            Quick Chat
+                        </h2>
+                    </div>
+                    <p style="color: #6b7280; font-size: 14px; margin: 0;">
+                        Text-only mode · Fastest response time · No audio processing
+                    </p>
+                </div>
+            """)
+
+            with gr.Row():
+                with gr.Column(scale=4):
+                    quick_chatbot = gr.Chatbot(
+                        label="Quick Chat",
+                        height=500,
+                        show_label=False,
+                    )
+
+                    with gr.Row():
+                        quick_msg_input = gr.Textbox(
+                            placeholder="Type your medical question...",
+                            show_label=False,
+                            scale=5,
+                            container=False,
+                        )
+                        quick_send_btn = gr.Button("Send", variant="primary", scale=1)
+
+                with gr.Column(scale=1):
+                    gr.HTML("""
+                        <div style="background: rgba(94,234,212,0.08); border: 1px solid rgba(94,234,212,0.15);
+                                    border-radius: 12px; padding: 20px; margin-bottom: 16px;">
+                            <h4 style="color: #5eead4; font-size: 13px; text-transform: uppercase;
+                                       letter-spacing: 0.5px; margin: 0 0 12px 0;">Why Quick Chat?</h4>
+                            <ul style="color: #9ca3af; font-size: 13px; margin: 0; padding-left: 16px; line-height: 1.8;">
+                                <li>No speech-to-text processing</li>
+                                <li>No text-to-speech generation</li>
+                                <li>Direct LLM interaction</li>
+                                <li>~2-5s response time</li>
+                            </ul>
+                        </div>
+                    """)
+
+                    quick_clear_btn = gr.Button("Clear Chat", variant="secondary")
+                    quick_status = gr.Textbox(
+                        label="Response Time",
                         interactive=False,
                         value="Ready",
                         show_label=True,
@@ -914,6 +1010,19 @@ with gr.Blocks(
     clone_btn.click(clone_voice, [voice_sample], [clone_status, voice_status])
     clear_voice_btn.click(clear_cloned_voice, None, [clone_status, voice_status])
 
+    # Quick Chat event handlers
+    quick_msg_input.submit(
+        process_quick_chat,
+        [quick_msg_input, quick_chatbot, model_choice],
+        [quick_msg_input, quick_chatbot, quick_status]
+    )
+    quick_send_btn.click(
+        process_quick_chat,
+        [quick_msg_input, quick_chatbot, model_choice],
+        [quick_msg_input, quick_chatbot, quick_status]
+    )
+    quick_clear_btn.click(reset_quick_chat, None, [quick_chatbot, quick_status])
+
 if __name__ == "__main__":
     print(f"Device: {get_device()}")
     print("Starting Medica - Premium Medical Voice Assistant...")
@@ -924,4 +1033,5 @@ if __name__ == "__main__":
         server_port=7860,
         share=False,
         show_error=True,
+        css=PREMIUM_CSS,
     )
